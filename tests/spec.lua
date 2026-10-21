@@ -61,3 +61,31 @@ do
 	assert(z.link({ ["citation-key"] = "k2020" }) == "zotero://select/items/@k2020")
 	print("zotero link ok")
 end
+
+do
+	local link = require("vault.link")
+	assert(link.at_cursor("see [[my note]] here", 5) == "my note")
+	assert(link.at_cursor("see [[my note]] here", 15) == "my note") -- on the closing ]]
+	assert(link.at_cursor("see [[my note]] here", 16) == nil)
+	assert(link.at_cursor("see [[note|alias]]", 8) == "note")
+	assert(link.at_cursor("see [[note#head]]", 8) == "note")
+	assert(link.at_cursor("[[a]] and [[b]]", 12) == "b")
+	assert(link.at_cursor("no links here", 3) == nil)
+
+	local tmp = vim.fn.tempname()
+	vim.fn.mkdir(tmp .. "/sub", "p")
+	vim.fn.writefile({ "x" }, tmp .. "/sub/existing.md")
+	require("vault").setup({ notes = { folder = "inbox" } })
+	vim.api.nvim_buf_set_lines(0, 0, -1, false, { "link to [[missing note]]" })
+	vim.api.nvim_win_set_cursor(0, { 1, 12 })
+	link.open(tmp)
+	assert(vim.fn.filereadable(tmp .. "/inbox/missing note.md") == 1, "note not created in notes.folder")
+	assert(vim.fn.readfile(tmp .. "/inbox/missing note.md")[2]:find("^created: "), "no front-matter")
+
+	vim.cmd.enew()
+	vim.api.nvim_buf_set_lines(0, 0, -1, false, { "link to [[existing]]" })
+	vim.api.nvim_win_set_cursor(0, { 1, 12 })
+	link.open(tmp)
+	assert(vim.api.nvim_buf_get_name(0):find("/sub/existing.md$"), "did not open the existing note")
+	print("link ok")
+end

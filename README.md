@@ -6,6 +6,7 @@ markdown keymaps appear; outside a vault the plugin does nothing.
 - Daily notes: open/create today's note, jump to the previous/next one
 - YAML front-matter generation
 - Task search (`- [ ]`) with a fuzzy picker
+- Wiki links: follow `[[note]]`, creating the note with front-matter when it doesn't exist yet
 - Zotero: insert citations and auto-create a literature note for the cited paper
 
 It reads your existing Obsidian settings, so there is nothing to configure twice.
@@ -52,14 +53,15 @@ file only overrides the keys it actually contains. The last column shows the mat
 | `.obsidian/daily-notes.json` | `template` | Template file for new daily notes, relative to the vault root (`.md` optional) | `daily.template` = none (empty file) |
 | `.obsidian/plugins/obsidian-citation-plugin/data.json` | `literatureNoteFolder` | Folder for new paper notes | `papers.folder` = `papers` |
 | `.obsidian/plugins/obsidian-citation-plugin/data.json` | `citationExportPath` | CSL-JSON library, only used when `zotero_db` is `false` or the file is missing | `papers.csl_json` = `assets/bib/zotero.json` |
+| `.obsidian/app.json` | `newFileLocation`, `newFileFolderPath` | Where `:VaultOpen` creates a missing note (`root` / `current` folder / a fixed `folder`) | `notes.folder` = vault root |
 
 **Not read** (hardcoded, even if you have the setting in Obsidian):
 
 - Core Templates plugin (`templates.json`), including its folder and date format. Only the daily note template is used.
 - Citation plugin's note templates: title is always `@<citekey>.md`, the inserted citation is always `[[@<citekey>]]`,
   and the note body is a fixed layout (see [Zotero](#zotero)), not your `literatureNoteContentTemplate`.
-- `app.json` (new-note location, link style), `zotero.json` / Zotero Integration plugin settings, hotkeys, and
-  every other core or community plugin setting.
+- `app.json`'s link style (`useMarkdownLinks`, `newLinkFormat`): `:VaultOpen` only follows `[[wiki links]]`.
+- `zotero.json` / Zotero Integration plugin settings, hotkeys, and every other core or community plugin setting.
 
 ## Options
 
@@ -76,6 +78,7 @@ require("vault").setup({
     folder = "papers",                  -- where Zotero paper notes are created
     csl_json = "assets/bib/zotero.json", -- CSL-JSON library, when zotero_db is unavailable
   },
+  notes = { folder = "" },              -- where :VaultOpen creates missing notes (default: vault root)
 })
 ```
 
@@ -102,6 +105,7 @@ opts = {
 | `:VaultTasks[!]`    | `<leader>vt`              | Fuzzy-search open tasks in the whole vault (`!` also lists done tasks)     |
 | `:VaultCite`        | `<leader>vc`              | Pick a Zotero entry, insert `[[@citekey]]`, create its paper note if missing |
 | `:VaultPaper`       | `<leader>vz`              | Pick a Zotero entry and open its paper note, creating it if missing        |
+| `:VaultOpen`        | `<leader>vo`              | Follow the `[[link]]` under the cursor, creating the note if it's unresolved |
 
 ## Configuration examples
 
@@ -177,6 +181,21 @@ created: 2026.10.19 10:55
 tags: []
 ---
 ```
+
+### Wiki links
+
+`:VaultOpen` (`<leader>vo`) follows the `[[link]]` under the cursor. `[[note|alias]]` and `[[note#heading]]`
+work (the alias and heading are ignored; it opens the file, not the heading).
+
+If the note doesn't exist, it is created with the same front-matter as `:VaultFrontmatter` and opened:
+
+- `[[folder/note]]` is created at `<vault>/folder/note.md`.
+- `[[note]]` goes where Obsidian would put a new note, from `.obsidian/app.json`: the vault root, the folder
+  of the current file (`newFileLocation: "current"`), or `newFileFolderPath`. With no `app.json`, the
+  `notes.folder` option applies (default: the vault root).
+
+An existing note is found anywhere in the vault by its filename, like Obsidian: `[[existing]]` opens
+`<vault>/some/deep/folder/existing.md`.
 
 ### Zotero
 

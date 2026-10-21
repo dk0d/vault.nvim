@@ -21,12 +21,15 @@ local function tasks(root, all)
 	})
 end
 
+function M.frontmatter_lines()
+	return { "---", "created: " .. os.date("%Y.%m.%d %H:%M"), "tags: []", "---", "" }
+end
+
 local function frontmatter(buf)
 	if vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == "---" then
 		return vim.notify("Front-matter already exists", vim.log.levels.WARN)
 	end
-	local fm = { "---", "created: " .. os.date("%Y.%m.%d %H:%M"), "tags: []", "---", "" }
-	vim.api.nvim_buf_set_lines(buf, 0, 0, false, fm)
+	vim.api.nvim_buf_set_lines(buf, 0, 0, false, M.frontmatter_lines())
 end
 
 -- one group in vim.fs.root = equal priority, so the nearest marker wins
@@ -34,7 +37,7 @@ M.markers = { ".obsidian", ".vault.toml", "vault.toml" }
 
 local function root()
 	local name = vim.api.nvim_buf_get_name(0)
-	return vim.fs.root(name ~= "" and name or vim.uv.cwd(), { M.markers })
+	return vim.fs.root(name ~= "" and name or vim.uv.cwd() or ".", { M.markers })
 end
 M.root = root
 
@@ -75,6 +78,9 @@ local function define_commands()
 	cmd("VaultPaper", "Open/create Zotero paper note", function(r)
 		zotero().open(r)
 	end)
+	cmd("VaultOpen", "Open the wiki link under the cursor, creating the note if missing", function(r)
+		require("vault.link").open(r)
+	end)
 end
 
 local function keymaps(buf)
@@ -90,6 +96,7 @@ local function keymaps(buf)
 		t = "Tasks",
 		c = "Cite",
 		z = "Paper",
+		o = "Open",
 	}) do
 		vim.keymap.set("n", p .. lhs, "<cmd>Vault" .. name .. "<cr>", { buffer = buf, desc = "Vault: " .. name })
 	end
@@ -108,6 +115,9 @@ M.opts = {
 	papers = {
 		folder = "papers", -- where Zotero paper notes are created
 		csl_json = "assets/bib/zotero.json", -- CSL-JSON library, used when zotero_db is unavailable
+	},
+	notes = {
+		folder = "", -- where :VaultOpen creates missing notes, relative to the vault root
 	},
 }
 
