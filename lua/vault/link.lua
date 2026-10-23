@@ -17,18 +17,17 @@ local function resolve(root, name)
 	return vim.fs.find(vim.fs.basename(name) .. ".md", { path = root, type = "file", limit = 1 })[1]
 end
 
--- Obsidian's new-note location (app.json); a link with a subpath is always relative to the vault root.
+-- A link with a subpath is always relative to the vault root.
 local function new_dir(root, name)
-	local V = require("vault")
 	if name:find("/") then
 		return root
 	end
-	local app = V.read_json(root .. "/.obsidian/app.json") or {}
-	if app.newFileLocation == "current" then
+	local notes = require("vault.config").get(root).notes
+	if notes.current then
 		local cur = vim.api.nvim_buf_get_name(0)
 		return cur ~= "" and vim.fs.dirname(cur) or root
 	end
-	local folder = (app.newFileLocation == "folder" and app.newFileFolderPath) or V.opts.notes.folder or ""
+	local folder = notes.folder
 	return folder ~= "" and (root .. "/" .. folder) or root
 end
 

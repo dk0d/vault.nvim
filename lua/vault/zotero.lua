@@ -93,19 +93,36 @@ function M.from_sqlite(db)
 	return vim.json.decode(res.stdout, { luanil = { object = true, array = true } })
 end
 
-local function load(root, plugin)
-	local db = vim.fn.expand(require("vault").opts.zotero_db or "")
-	if db ~= "" and vim.uv.fs_stat(db) then
-		local entries, err = M.from_sqlite(db)
-		if not entries then
-			vim.notify("Zotero sqlite failed: " .. err, vim.log.levels.ERROR)
-		end
-		return entries
+local function load(root, config)
+	if config.db == false then
+		vim.notify("Citations are disabled", vim.log.levels.INFO)
+		return
 	end
-	local bib = root .. "/" .. (plugin.citationExportPath or require("vault").opts.papers.csl_json)
-	local entries = require("vault").read_json(bib)
-	if not entries then
-		vim.notify("No Zotero db or CSL-JSON library found (" .. bib .. ")", vim.log.levels.ERROR)
+	local db = vim.fs.normalize(config.db)
+	if db:sub(1, 1) ~= "/" then
+		db = root .. "/" .. db
+	end
+	if vim.fn.filereadable(db) == 0 then
+		vim.notify("Citation database not found or unreadable: " .. db, vim.log.levels.ERROR)
+		return
+	end
+	local entries, err
+	if db:lower():match("%.json$") then
+		entries = require("vault").read_json(db)
+		err = "invalid CSL-JSON library"
+	else
+		entries, err = M.from_sqlite(db)
+	end
+	if type(entries) ~= "table" or not vim.islist(entries) then
+		vim.notify("Cannot load citations (" .. db .. "): " .. (err or "expected an entry list"), vim.log.levels.ERROR)
+		return
+	end
+	for _, entry in ipairs(entries) do
+		local key = type(entry) == "table" and (entry["citation-key"] or entry.id)
+		if type(key) ~= "string" or key == "" then
+			vim.notify("Invalid citation key in " .. db, vim.log.levels.ERROR)
+			return
+		end
 	end
 	return entries
 end
@@ -119,15 +136,15 @@ function M.link(e)
 end
 
 local function pick(root, cb)
-	local plugin = require("vault").read_json(root .. "/.obsidian/plugins/obsidian-citation-plugin/data.json") or {}
-	local entries = load(root, plugin)
+	local config = require("vault.config").get(root).citations
+	local entries = load(root, config)
 	if not entries then
 		return
 	end
 	table.sort(entries, function(a, b)
-		return a["citation-key"] < b["citation-key"]
+		return (a["citation-key"] or a.id) < (b["citation-key"] or b.id)
 	end)
-	local dir = root .. "/" .. (plugin.literatureNoteFolder or require("vault").opts.papers.folder)
+	local dir = root .. "/" .. config.folder
 	local items = vim.tbl_map(function(e)
 		return { text = ("%s  %s"):format(e["citation-key"] or e.id, e.title or ""), entry = e }
 	end, entries)

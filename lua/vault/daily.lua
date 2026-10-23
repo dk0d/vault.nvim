@@ -41,20 +41,18 @@ function M.parser(format)
 end
 
 local function config(root)
-	local V = require("vault")
-	local c = V.read_json(root .. "/.obsidian/daily-notes.json") or {}
-	local o = V.opts.daily
-	local folder = c.folder or o.folder or ""
+	local c = require("vault.config").get(root).daily
+	local folder = c.folder
 	return {
-		format = c.format or o.format,
+		format = c.format,
 		dir = folder ~= "" and (root .. "/" .. folder) or root,
-		template = c.template or o.template,
+		template = c.template,
 	}
 end
 
 -- Templater's `<% tp.date.now("fmt") %>` is the only tag supported; others are left untouched.
 local function template_lines(root, template)
-	if not template then
+	if not template or template == "" then
 		return {}
 	end
 	local path = root .. "/" .. template

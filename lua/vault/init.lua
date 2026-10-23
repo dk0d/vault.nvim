@@ -83,8 +83,8 @@ local function define_commands()
 	end)
 end
 
-local function keymaps(buf)
-	local p = M.opts.prefix
+local function keymaps(buf, r)
+	local p = require("vault.config").get(r).keymaps.prefix
 	if not p then
 		return
 	end
@@ -102,19 +102,17 @@ local function keymaps(buf)
 	end
 end
 
--- Obsidian's own settings win; these apply when the vault has none (or no .obsidian/ at all).
+-- Vault TOML > Obsidian settings > these setup() defaults, per value.
 M.opts = {
 	prefix = "<leader>v", -- false disables keymaps
-	-- path to zotero.sqlite; falls back to the vault's CSL-JSON export if false or the file is missing
-	zotero_db = "~/Zotero/zotero.sqlite",
 	daily = {
 		format = "YYYY-MM-DD", -- moment.js format
 		folder = "", -- relative to the vault root
 		template = nil, -- relative to the vault root, e.g. "templates/daily"
 	},
-	papers = {
+	citations = {
 		folder = "papers", -- where Zotero paper notes are created
-		csl_json = "assets/bib/zotero.json", -- CSL-JSON library, used when zotero_db is unavailable
+		db = "~/Zotero/zotero.sqlite", -- Zotero SQLite or a CSL-JSON (.json) file; false disables citations
 	},
 	notes = {
 		folder = "", -- where :VaultOpen creates missing notes, relative to the vault root
@@ -137,8 +135,9 @@ function M.setup(opts)
 		group = g,
 		pattern = "markdown",
 		callback = function(a)
-			if activate() and root() then
-				keymaps(a.buf)
+			local r = root()
+			if activate() and r then
+				keymaps(a.buf, r)
 			end
 		end,
 	})
