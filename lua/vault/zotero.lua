@@ -67,8 +67,6 @@ select coalesce(json_group_array(json_object(
     and i.itemTypeID not in (select itemTypeID from itemTypes where typeName in ('attachment', 'note', 'annotation'));
 ]]
 
--- shortcut: read-only URI works while Zotero is open (WAL) but fails with "database is locked" if Zotero
--- holds an exclusive lock (dbLockExclusive); add a copy-the-db fallback if that ever bites.
 local function uri(path)
 	return "file:" .. path:gsub("[%%?# ]", function(c)
 		return ("%%%02X"):format(c:byte())
@@ -76,6 +74,9 @@ local function uri(path)
 end
 
 function M.from_sqlite(db)
+	if vim.fn.executable("sqlite3") == 0 then
+		return nil, "sqlite3 is not installed"
+	end
 	local sql = QUERY:format(
 		field("citationKey"),
 		field("title"),
@@ -93,6 +94,70 @@ function M.from_sqlite(db)
 	return vim.json.decode(res.stdout, { luanil = { object = true, array = true } })
 end
 
+-- shortcut: HTTP uses the running profile's personal library; add library selection if groups are needed.
+function M.from_api()
+	if vim.fn.executable("curl") == 0 then
+		return nil, "curl is not installed"
+	end
+	-- The local API returns the whole personal library when no limit is specified.
+	local res = vim.system({
+		"curl", "--disable", "--silent", "--show-error", "--noproxy", "*",
+		"--connect-timeout", "1", "--max-time", "10", "--write-out", "\n%{http_code}",
+		"http://127.0.0.1:23119/api/users/0/items/top?format=json",
+	}):wait()
+	if res.code ~= 0 then
+		return nil, vim.trim(res.stderr)
+	end
+	local body, status = res.stdout:match("^(.*)\n(%d%d%d)$")
+	if status ~= "200" then
+		return nil, "HTTP " .. (status or "invalid response")
+	end
+	local ok, items = pcall(vim.json.decode, body, { luanil = { object = true, array = true } })
+	if not ok or type(items) ~= "table" or not vim.islist(items) then
+		return nil, "invalid JSON item list"
+	end
+	local entries = {}
+	for _, item in ipairs(items) do
+		local data = type(item) == "table" and item.data
+		if type(data) ~= "table" or type(item.key) ~= "string" then
+			return nil, "invalid API item"
+		end
+		for _, name in ipairs({ "citationKey", "title", "abstractNote", "url", "publicationTitle", "proceedingsTitle", "date" }) do
+			if data[name] ~= nil and type(data[name]) ~= "string" then
+				return nil, "invalid API field: " .. name
+			end
+		end
+		if data.citationKey and data.citationKey ~= "" and not data.deleted
+			and data.itemType ~= "attachment" and data.itemType ~= "note" and data.itemType ~= "annotation" then
+			local authors = {}
+			if type(data.creators) ~= "table" or not vim.islist(data.creators) then
+				return nil, "invalid API creators"
+			end
+			for _, creator in ipairs(data.creators) do
+				if type(creator) ~= "table" then
+					return nil, "invalid API creator"
+				end
+				for _, name in ipairs({ "name", "firstName", "lastName" }) do
+					if creator[name] ~= nil and type(creator[name]) ~= "string" then
+						return nil, "invalid API creator name"
+					end
+				end
+				if creator.creatorType == "author" then
+					authors[#authors + 1] = { literal = creator.name, given = creator.firstName, family = creator.lastName }
+				end
+			end
+			entries[#entries + 1] = {
+				key = item.key, ["citation-key"] = data.citationKey,
+				title = data.title, abstract = data.abstractNote, URL = data.url,
+				["container-title"] = data.publicationTitle or data.proceedingsTitle,
+				issued = { ["date-parts"] = { { (data.date or ""):match("%d%d%d%d") } } },
+				author = authors,
+			}
+		end
+	end
+	return entries
+end
+
 local function load(root, config)
 	if config.db == false then
 		vim.notify("Citations are disabled", vim.log.levels.INFO)
@@ -102,16 +167,24 @@ local function load(root, config)
 	if db:sub(1, 1) ~= "/" then
 		db = root .. "/" .. db
 	end
-	if vim.fn.filereadable(db) == 0 then
-		vim.notify("Citation database not found or unreadable: " .. db, vim.log.levels.ERROR)
-		return
-	end
 	local entries, err
 	if db:lower():match("%.json$") then
 		entries = require("vault").read_json(db)
-		err = "invalid CSL-JSON library"
+		err = "missing or invalid CSL-JSON library"
 	else
-		entries, err = M.from_sqlite(db)
+		local api_err
+		entries, api_err = M.from_api()
+		if not entries then
+			if vim.fn.filereadable(db) == 1 then
+				entries, err = M.from_sqlite(db)
+			else
+				err = "database not found or unreadable"
+			end
+			if not entries then
+				err = "HTTP API: " .. api_err .. "; SQLite: " .. err
+					.. ". If Zotero is running, enable extensions.zotero.httpServer.localAPI.enabled in its Config Editor."
+			end
+		end
 	end
 	if type(entries) ~= "table" or not vim.islist(entries) then
 		vim.notify("Cannot load citations (" .. db .. "): " .. (err or "expected an entry list"), vim.log.levels.ERROR)

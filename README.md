@@ -15,7 +15,7 @@ It reads your existing Obsidian settings, with optional per-vault overrides in `
 
 - Neovim >= 0.10 (developed and tested on 0.12; uses `vim.system` and `vim.fs.root`)
 - [snacks.nvim](https://github.com/folke/snacks.nvim) (task picker) and [ripgrep](https://github.com/BurntSushi/ripgrep)
-- `sqlite3` on your `PATH` (only for reading Zotero directly)
+- `curl` on your `PATH` (Zotero's local HTTP API) and `sqlite3` (offline database fallback)
 
 ## Installation
 
@@ -238,15 +238,42 @@ An existing note is found anywhere in the vault by its filename, like Obsidian: 
 Set `[citations].db` in vault TOML, or `citations.db` in `setup()`:
 
 - A path ending in `.json` (case-insensitive) is read as a CSL-JSON library.
-- Other paths are read as SQLite databases with the Zotero schema (default: `~/Zotero/zotero.sqlite`).
+- Other paths select Zotero (default: `~/Zotero/zotero.sqlite`): try the local HTTP API first, then
+  read the configured SQLite database if HTTP fails.
 - `false` disables citations: `:VaultCite` and `:VaultPaper` report that citations are disabled and do nothing.
 
-Relative paths resolve from the vault root; absolute paths and `~` work for either format. A missing or
-invalid source reports an error. When TOML does not specify `db`, Obsidian's `citationExportPath` takes
+Relative paths resolve from the vault root; absolute paths and `~` work for either format. If neither
+HTTP nor SQLite succeeds, the error includes both failures. When TOML does not specify `db`, Obsidian's `citationExportPath` takes
 precedence over `setup().citations.db`.
 
+For live access, [enable Zotero's local HTTP API](#enable-zoteros-local-http-api). The plugin reads the running profile's
+**personal library** at `http://127.0.0.1:23119`; the configured database path is used only for the
+SQLite fallback. HTTP requests have a 1-second connection timeout and a 10-second total timeout.
+JSON sources and `db = false` never contact the API.
+
+#### Enable Zotero's local HTTP API
+
+1. Open Zotero and go to **Settings → Advanced** (on macOS, **Zotero → Settings**).
+2. Scroll down and click **Config Editor**.
+3. Search for `extensions.zotero.httpServer.localAPI.enabled`.
+4. Toggle its value to **`true`**.
+5. Keep Zotero running and try `:VaultCite` or `:VaultPaper` in Neovim.
+
+To check the API from a terminal:
+
+```sh
+curl -i 'http://127.0.0.1:23119/api/users/0/items/top?limit=1&format=json'
+```
+
+Expect **`200 OK`** and a JSON array (possibly empty). **`403 Forbidden`** with “Local API is not enabled”
+means the preference is still disabled. If the connection is refused, check that Zotero is running and
+`extensions.zotero.httpServer.enabled` is `true`; restart Zotero after changing that server setting.
+The plugin uses Zotero's default port, **23119**.
+
+#### Citation configuration examples
+
 ```lua
--- default: read the live database
+-- default: HTTP while Zotero runs, SQLite when it is closed
 opts = { citations = { db = "~/Zotero/zotero.sqlite" } }
 
 -- non-standard Zotero data directory
@@ -268,15 +295,17 @@ In the Zotero picker, type to fuzzy-filter and `<CR>` inserts the citation (`:Va
 (`:VaultPaper`). `<C-t>` opens the highlighted item in the Zotero app and leaves the picker open, so you can
 keep browsing. This overrides snacks' default `<C-t>` (open in tab) inside this picker only.
 
-The link is `zotero://select/library/items/<itemKey>` when reading the database. With a CSL-JSON library
+The link is `zotero://select/library/items/<itemKey>` when using HTTP or SQLite. With a CSL-JSON library
 there is no item key, so it uses `zotero://select/items/@<citekey>`, which needs Better BibTeX installed in Zotero.
 
-Notes on the database mode:
+Notes on Zotero mode:
 
-- The database is opened read-only through a `file:...?mode=ro` URI, so it is safe while Zotero is open
-  (Zotero uses WAL mode) and new items appear with no re-export. Nothing is copied or written.
-- If Zotero is configured with `extensions.zotero.dbLockExclusive = true` the read fails with
-  "database is locked". Turn that pref off, or set `citations.db` to a CSL-JSON export path.
+- HTTP uses read-only GET requests. The SQLite fallback opens the database read-only through a
+  `file:...?mode=ro` URI. Nothing is copied or written to Zotero.
+- An HTTP failure does not necessarily mean Zotero is closed: the local API may be disabled or
+  unavailable. Zotero 10 holds an exclusive database lock while running; if HTTP also fails, enable
+  local API access or quit Zotero to allow SQLite access. There is no `dbLockExclusive` preference
+  to disable in Zotero 10.
 - Citation keys come from Zotero's built-in `citationKey` field (set by Zotero 7 or Better BibTeX).
   Items without one are skipped.
 - Only the `author` creator role is read.
@@ -331,5 +360,5 @@ daily_notes_folder = "daily"
 ## Development
 
 ```sh
-nvim -l tests/spec.lua   # TOML/config integration, notes, and (if present) your real Zotero db
+nvim -l tests/spec.lua   # TOML/config, notes, HTTP failures, and a temporary SQLite fixture
 ```

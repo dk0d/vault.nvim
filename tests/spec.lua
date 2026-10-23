@@ -22,14 +22,7 @@ assert(note:find('title: "A \\"quoted\\": title"', 1, true))
 assert(note:find("  - \"Ada Lovelace\"", 1, true) and note:find("year: 2020", 1, true))
 print("ok")
 
-local db = vim.fn.expand("~/Zotero/zotero.sqlite")
-if vim.uv.fs_stat(db) then
-  local entries = assert(require("vault.zotero").from_sqlite(db))
-  local e = assert(entries[1])
-  assert(e["citation-key"] and e.title and e.author, "sqlite entry malformed")
-  for _, x in ipairs(entries) do assert(type(table.concat(require("vault.zotero").render(x), "\n")) == "string") end
-  print("sqlite ok:", #entries, "entries")
-end
+dofile("tests/zotero.lua")
 
 -- Vault TOML parsing, per-value precedence, reloads, and feature integration.
 do
@@ -131,8 +124,9 @@ prefix = "\\v"
 	local entries = { { ["citation-key"] = "z-last" }, { id = "toml-paper", title = "Local library" } }
 	vim.fn.writefile({ vim.json.encode(entries) }, tmp .. "/library.json")
 	local z, snacks = require("vault.zotero"), _G.Snacks
-	local sqlite = z.from_sqlite
+	local sqlite, api = z.from_sqlite, z.from_api
 	z.from_sqlite = function() error("CSL-JSON was read as SQLite") end
+	z.from_api = function() error("CSL-JSON or disabled citations tried HTTP") end
 	_G.Snacks = { picker = { pick = function(opts)
 		assert(#opts.items == 2 and opts.items[1].entry.title == "Local library")
 		opts.confirm({ close = function() end }, opts.items[1])
@@ -144,6 +138,7 @@ prefix = "\\v"
 	assert(vim.api.nvim_get_current_line():find("[[@toml-paper]]", 1, true), "CSL-JSON citation not inserted")
 
 	vim.fn.writefile({}, tmp .. "/library.sqlite")
+	z.from_api = function() return nil, "offline" end
 	z.from_sqlite = function(path)
 		assert(path == tmp .. "/library.sqlite", "SQLite path not relative to vault")
 		return entries
@@ -156,18 +151,20 @@ prefix = "\\v"
 	_G.Snacks.picker.pick = function() error("disabled or invalid citations opened a picker") end
 	z.from_sqlite = function() error("disabled or missing database was read") end
 	vim.fn.writefile({ '[citations]', 'db = false' }, hidden)
+	z.from_api = function() error("disabled citations tried HTTP") end
 	local before = vim.api.nvim_buf_get_lines(0, 0, -1, false)
 	z.cite(tmp)
 	z.open(tmp)
 	assert(#notices == 2 and notices[1][2] == vim.log.levels.INFO)
 	assert(vim.deep_equal(before, vim.api.nvim_buf_get_lines(0, 0, -1, false)), "disabled citations changed the buffer")
+	z.from_api = function() return nil, "offline" end
 	for _, source in ipairs({ "missing.sqlite", "missing.json", "invalid.json" }) do
 		vim.fn.writefile({ '[citations]', 'db = "' .. source .. '"' }, hidden)
 		vim.fn.writefile({ '{"not":"a library"}' }, tmp .. "/invalid.json")
 		z.open(tmp)
 		assert(notices[#notices][2] == vim.log.levels.ERROR, "invalid database not reported")
 	end
-	_G.Snacks, z.from_sqlite, vim.notify = snacks, sqlite, notify
+	_G.Snacks, z.from_sqlite, z.from_api, vim.notify = snacks, sqlite, api, notify
 
 	vim.fn.writefile({ '[daily]', 'folder = false' }, hidden)
 	local ok, err = pcall(d.today, tmp)
